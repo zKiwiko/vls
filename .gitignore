@@ -1,5 +1,5 @@
 #General
-vls
+build/
 
 #MacOS
 .DS_Store

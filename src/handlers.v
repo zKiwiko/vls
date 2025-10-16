@@ -3,17 +3,20 @@
 
 // `user. ...` fields and methods
 fn (mut app App) completion(request Request) Response {
-	log('completion')
-	log('request=${request}')
-	// app.text = request.params.content_changes[0].text
+    
+	// Ensure we use latest text if provided by the client
+	if request.params.content_changes.len > 0 && request.params.content_changes[0].text != '' {
+		app.text = request.params.content_changes[0].text
+	}
 	path := request.params.text_document.uri
 	line_nr := request.params.position.line + 1
 	col := request.params.position.char
 	var_ac := app.run_v_line_info(path, line_nr, col)
-	log('var_ac=${var_ac}')
+    
 	mut details := []Detail{cap: 3}
 
-	$for f in var_ac.fields {
+	// iterate over the JsonVarAC fields by name
+	$for f in JsonVarAC.fields {
 		kind := $match f.name {
 			'methods' {
 				DetailKind.method
@@ -43,7 +46,6 @@ fn (mut app App) completion(request Request) Response {
 				.text
 			}
 			$else {
-				log('unsupport JsonVarAC field')
 				DetailKind.text
 			}
 		}
@@ -84,15 +86,14 @@ fn (mut app App) completion(request Request) Response {
 
 // Returns instant red wavy errors
 fn (mut app App) on_did_change(request Request) ?Notification {
-	log('on did change(len=${request.params.content_changes.len})')
 	if request.params.content_changes.len == 0 || request.params.content_changes[0].text == '' {
-		log('on_did_change() no params')
+        
 		return none
 	}
 	app.text = request.params.content_changes[0].text
 	path := request.params.text_document.uri
 	v_errors := app.run_v_check(path, app.text)
-	log('run_v_check errors:${v_errors}')
+    
 	mut diagnostics := []LSPDiagnostic{}
 	mut seen_positions := map[string]bool{}
 	for v_err in v_errors {
@@ -111,7 +112,6 @@ fn (mut app App) on_did_change(request Request) ?Notification {
 		method: 'textDocument/publishDiagnostics'
 		params: params
 	}
-	log('returning notification: ${notification}')
 	return notification
 }
 
@@ -120,6 +120,10 @@ fn (mut app App) on_did_change(request Request) ?Notification {
 fn (mut app App) signature_help(request Request) Response {
 	// For signature help, the file must be up-to-date.
 	path := request.params.text_document.uri
+	// update local text if client provided a new snapshot
+	if request.params.content_changes.len > 0 && request.params.content_changes[0].text != '' {
+		app.text = request.params.content_changes[0].text
+	}
 	lines := app.text.split('\n')
 	line_nr := request.params.position.line
 	// char_pos := request.params.position.char
@@ -130,7 +134,7 @@ fn (mut app App) signature_help(request Request) Response {
 		}
 	}
 	line_text := lines[line_nr]
-	log('SIG LINE TEXT=${line_text}')
+    
 	mut active_parameter := 0
 	fn_sig := app.run_v_fn_sig(path, line_nr, line_text)
 	mut param_infos := []ParameterInformation{}
@@ -158,13 +162,13 @@ fn (mut app App) signature_help(request Request) Response {
 
 // Finds the word/expression at a given cursor position in the document.
 fn (app &App) get_expression_at_cursor(line_nr int, col int) string {
-	log('get_expression_at_cursor line_nr=${line_nr} col=${col}')
 	lines := app.text.split('\n')
 	if line_nr < 0 || line_nr >= lines.len {
 		return ''
 	}
-	line := lines[line_nr].trim_space()
-	log('EXPR LINE="${line}"')
+	// Do not trim the line: trimming changes column indexes
+	line := lines[line_nr]
+    
 	if col < 0 || col > line.len {
 		return ''
 	}
@@ -197,7 +201,6 @@ fn (app &App) get_expression_at_cursor(line_nr int, col int) string {
 }
 
 fn (mut app App) go_to_definition(request Request) Response {
-	log('go_to_definition')
 	path := request.params.text_document.uri
 	// LSP line is 0-based, V compiler is 1-based
 	line_nr_0based := request.params.position.line
@@ -205,7 +208,7 @@ fn (mut app App) go_to_definition(request Request) Response {
 	col := request.params.position.char
 	// Get the expression under the cursor.
 	expression := app.get_expression_at_cursor(line_nr_0based, col)
-	log('found expression for definition: "${expression}"')
+    
 	if expression == '' {
 		return Response{
 			id:     request.id
@@ -214,10 +217,9 @@ fn (mut app App) go_to_definition(request Request) Response {
 	}
 	// Call the new interop function that uses the `gd^` prefix.
 	location := app.run_v_go_to_definition(path, line_nr_1based, expression)
-	log('location for definition=${location}')
 	// Check if the V compiler provided a definition location
 	if location.uri == '' {
-		log('no definition info found from V compiler')
+        
 		return Response{
 			id:     request.id
 			result: 'null'
@@ -227,6 +229,5 @@ fn (mut app App) go_to_definition(request Request) Response {
 		id:     request.id
 		result: location
 	}
-	log('sending definition response: ${resp}')
 	return resp
 }
